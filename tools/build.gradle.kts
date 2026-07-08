@@ -21,9 +21,7 @@ plugins {
   `java-library`
   `maven-publish`
   signing
-  id("org.caffinitas.gradle.testsummary")
-  id("org.caffinitas.gradle.testrerun")
-  `cel-conventions`
+  id("cel-conventions")
 }
 
 apply<ProtobufPlugin>()
@@ -43,4 +41,5 @@ configure<ProtobufExtension> {
     // Download from repositories
     artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.get()}"
   }
+  generateProtoTasks { ofSourceSet("main").configureEach { enabled = false } }
 }

@@ -18,9 +18,7 @@ plugins {
   `java-library`
   `maven-publish`
   signing
-  id("org.caffinitas.gradle.testsummary")
-  id("org.caffinitas.gradle.testrerun")
-  `cel-conventions`
+  id("cel-conventions")
 }
 
 description = "CEL Jackson 3 support"

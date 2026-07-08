@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-if (project.name != "conformance" && project.name != "jacoco") {
-  apply<PublishingHelperPlugin>()
-}
-
 nessieConfigureSpotless()
 
 nessieConfigureJava()
+
+if (project.name != "conformance" && project.name != "jacoco") {
+  apply<PublishingHelperPlugin>()
+}
 
 nessieIde()
 
 apply<CelCodeCoveragePlugin>()
 
-if (projectDir.resolve("src/test/java").exists()) {
+if (layout.projectDirectory.dir("src/test/java").asFile.exists()) {
   nessieConfigureTestTasks()
 }
 
