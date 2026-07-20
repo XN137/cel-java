@@ -24,6 +24,9 @@ import static org.projectnessie.cel.interpreter.InterpretablePlanner.newUnchecke
 
 import com.google.api.expr.v1alpha1.CheckedExpr;
 import com.google.api.expr.v1alpha1.Expr;
+import com.google.api.expr.v1alpha1.Reference;
+import com.google.api.expr.v1alpha1.Type;
+import java.util.Map;
 import org.projectnessie.cel.common.containers.Container;
 import org.projectnessie.cel.common.types.ref.TypeAdapter;
 import org.projectnessie.cel.common.types.ref.TypeProvider;
@@ -31,16 +34,28 @@ import org.projectnessie.cel.interpreter.functions.Overload;
 
 /** Interpreter generates a new Interpretable from a checked or unchecked expression. */
 public interface Interpreter {
-  /**
-   * NewInterpretable creates an Interpretable from a checked expression and an optional list of
-   * InterpretableDecorator values.
-   */
+  /** Creates an {@link Interpretable} from a checked expression and optional decorators. */
   Interpretable newInterpretable(CheckedExpr checked, InterpretableDecorator... decorators);
 
   /**
-   * NewUncheckedInterpretable returns an Interpretable from a parsed expression and an optional
-   * list of InterpretableDecorator values.
+   * Creates an {@link Interpretable} directly from an expression and its checked metadata without
+   * constructing a {@link CheckedExpr} wrapper.
    */
+  default Interpretable newInterpretable(
+      Expr expr,
+      Map<Long, Reference> refMap,
+      Map<Long, Type> typeMap,
+      InterpretableDecorator... decorators) {
+    CheckedExpr checked =
+        CheckedExpr.newBuilder()
+            .setExpr(expr)
+            .putAllReferenceMap(refMap)
+            .putAllTypeMap(typeMap)
+            .build();
+    return newInterpretable(checked, decorators);
+  }
+
+  /** Creates an {@link Interpretable} from a parsed expression and optional decorators. */
   Interpretable newUncheckedInterpretable(Expr expr, InterpretableDecorator... decorators);
 
   /**
@@ -119,7 +134,6 @@ public interface Interpreter {
       this.attrFactory = attrFactory;
     }
 
-    /** NewIntepretable implements the Interpreter interface method. */
     @Override
     public Interpretable newInterpretable(
         CheckedExpr checked, InterpretableDecorator... decorators) {
@@ -128,7 +142,18 @@ public interface Interpreter {
       return p.plan(checked.getExpr());
     }
 
-    /** NewUncheckedIntepretable implements the Interpreter interface method. */
+    @Override
+    public Interpretable newInterpretable(
+        Expr expr,
+        Map<Long, Reference> refMap,
+        Map<Long, Type> typeMap,
+        InterpretableDecorator... decorators) {
+      InterpretablePlanner p =
+          newPlanner(
+              dispatcher, provider, adapter, attrFactory, container, refMap, typeMap, decorators);
+      return p.plan(expr);
+    }
+
     @Override
     public Interpretable newUncheckedInterpretable(
         Expr expr, InterpretableDecorator... decorators) {
