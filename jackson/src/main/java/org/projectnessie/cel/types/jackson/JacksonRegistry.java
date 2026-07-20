@@ -23,8 +23,8 @@ import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.type.TypeFactory;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.projectnessie.cel.common.types.ref.FieldType;
 import org.projectnessie.cel.common.types.ref.Type;
 import org.projectnessie.cel.common.types.ref.TypeAdapterSupport;
@@ -42,11 +42,11 @@ public final class JacksonRegistry implements TypeRegistry {
   final ObjectMapper objectMapper;
   private final SerializerProvider serializationProvider;
   private final TypeFactory typeFactory;
-  private final Map<Class<?>, JacksonTypeDescription> knownTypes = new HashMap<>();
-  private final Map<String, JacksonTypeDescription> knownTypesByName = new HashMap<>();
+  private final Map<Class<?>, JacksonTypeDescription> knownTypes = new ConcurrentHashMap<>();
+  private final Map<String, JacksonTypeDescription> knownTypesByName = new ConcurrentHashMap<>();
 
-  private final Map<Class<?>, JacksonEnumDescription> enumMap = new HashMap<>();
-  private final Map<String, JacksonEnumValue> enumValues = new HashMap<>();
+  private final Map<Class<?>, JacksonEnumDescription> enumMap = new ConcurrentHashMap<>();
+  private final Map<String, JacksonEnumValue> enumValues = new ConcurrentHashMap<>();
 
   private JacksonRegistry() {
     this.objectMapper = new ObjectMapper();
@@ -149,7 +149,7 @@ public final class JacksonRegistry implements TypeRegistry {
     }
   }
 
-  JacksonEnumDescription enumDescription(Class<?> clazz) {
+  synchronized JacksonEnumDescription enumDescription(Class<?> clazz) {
     if (!Enum.class.isAssignableFrom(clazz)) {
       throw new IllegalArgumentException("only enum allowed here");
     }
@@ -158,23 +158,14 @@ public final class JacksonRegistry implements TypeRegistry {
     if (ed != null) {
       return ed;
     }
-    ed = computeEnumDescription(clazz);
+    JavaType javaType = typeFactory.constructType(clazz);
+    ed = new JacksonEnumDescription(javaType);
+    ed.buildValues().forEach(v -> enumValues.put(v.fullyQualifiedName(), v));
     enumMap.put(clazz, ed);
     return ed;
   }
 
-  private JacksonEnumDescription computeEnumDescription(Class<?> clazz) {
-    JavaType javaType = typeFactory.constructType(clazz);
-
-    JacksonEnumDescription enumDesc = new JacksonEnumDescription(javaType);
-    enumMap.put(clazz, enumDesc);
-
-    enumDesc.buildValues().forEach(v -> enumValues.put(v.fullyQualifiedName(), v));
-
-    return enumDesc;
-  }
-
-  JacksonTypeDescription typeDescription(Class<?> clazz) {
+  synchronized JacksonTypeDescription typeDescription(Class<?> clazz) {
     if (Enum.class.isAssignableFrom(clazz)) {
       throw new IllegalArgumentException("enum not allowed here");
     }
