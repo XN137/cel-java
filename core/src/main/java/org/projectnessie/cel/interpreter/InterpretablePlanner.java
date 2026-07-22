@@ -56,6 +56,7 @@ import org.projectnessie.cel.interpreter.Interpretable.EvalBinary;
 import org.projectnessie.cel.interpreter.Interpretable.EvalEq;
 import org.projectnessie.cel.interpreter.Interpretable.EvalFold;
 import org.projectnessie.cel.interpreter.Interpretable.EvalList;
+import org.projectnessie.cel.interpreter.Interpretable.EvalListFold;
 import org.projectnessie.cel.interpreter.Interpretable.EvalMap;
 import org.projectnessie.cel.interpreter.Interpretable.EvalNe;
 import org.projectnessie.cel.interpreter.Interpretable.EvalObj;
@@ -134,7 +135,7 @@ public interface InterpretablePlanner {
   }
 
   /** planner is an implementatio of the interpretablePlanner interface. */
-  final class Planner implements InterpretablePlanner {
+  static final class Planner implements InterpretablePlanner {
     private final Dispatcher disp;
     private final TypeProvider provider;
     private final TypeAdapter adapter;
@@ -388,7 +389,7 @@ public interface InterpretablePlanner {
     }
 
     /** planCallZero generates a zero-arity callable Interpretable. */
-    Interpretable planCallZero(Expr expr, String function, String overload, Overload impl) {
+    static Interpretable planCallZero(Expr expr, String function, String overload, Overload impl) {
       if (impl == null || impl.function == null) {
         throw new IllegalArgumentException(String.format("no such overload: %s()", function));
       }
@@ -396,7 +397,7 @@ public interface InterpretablePlanner {
     }
 
     /** planCallUnary generates a unary callable Interpretable. */
-    Interpretable planCallUnary(
+    static Interpretable planCallUnary(
         Expr expr, String function, String overload, Overload impl, Interpretable[] args) {
       UnaryOp fn = null;
       Trait trait = null;
@@ -411,7 +412,7 @@ public interface InterpretablePlanner {
     }
 
     /** planCallBinary generates a binary callable Interpretable. */
-    Interpretable planCallBinary(
+    static Interpretable planCallBinary(
         Expr expr, String function, String overload, Overload impl, Interpretable... args) {
       BinaryOp fn = null;
       Trait trait = null;
@@ -427,7 +428,7 @@ public interface InterpretablePlanner {
     }
 
     /** planCallVarArgs generates a variable argument callable Interpretable. */
-    Interpretable planCallVarArgs(
+    static Interpretable planCallVarArgs(
         Expr expr, String function, String overload, Overload impl, Interpretable... args) {
       FunctionOp fn = null;
       Trait trait = null;
@@ -442,22 +443,22 @@ public interface InterpretablePlanner {
     }
 
     /** planCallEqual generates an equals (==) Interpretable. */
-    Interpretable planCallEqual(Expr expr, Interpretable... args) {
+    static Interpretable planCallEqual(Expr expr, Interpretable... args) {
       return new EvalEq(expr.getId(), args[0], args[1]);
     }
 
     /** planCallNotEqual generates a not equals (!=) Interpretable. */
-    Interpretable planCallNotEqual(Expr expr, Interpretable... args) {
+    static Interpretable planCallNotEqual(Expr expr, Interpretable... args) {
       return new EvalNe(expr.getId(), args[0], args[1]);
     }
 
     /** planCallLogicalAnd generates a logical and (&&) Interpretable. */
-    Interpretable planCallLogicalAnd(Expr expr, Interpretable... args) {
+    static Interpretable planCallLogicalAnd(Expr expr, Interpretable... args) {
       return new EvalAnd(expr.getId(), args[0], args[1]);
     }
 
     /** planCallLogicalOr generates a logical or (||) Interpretable. */
-    Interpretable planCallLogicalOr(Expr expr, Interpretable... args) {
+    static Interpretable planCallLogicalOr(Expr expr, Interpretable... args) {
       return new EvalOr(expr.getId(), args[0], args[1]);
     }
 
@@ -591,6 +592,27 @@ public interface InterpretablePlanner {
     /** planComprehension generates an Interpretable fold operation. */
     Interpretable planComprehension(Expr expr) {
       Comprehension fold = expr.getComprehensionExpr();
+      MacroListFold macroListFold = macroListFold(fold);
+      if (macroListFold != null) {
+        Interpretable iterRange = plan(fold.getIterRange());
+        if (iterRange == null) {
+          return null;
+        }
+        Interpretable filter = null;
+        if (macroListFold.filter != null) {
+          filter = plan(macroListFold.filter);
+          if (filter == null) {
+            return null;
+          }
+        }
+        Interpretable transform = plan(macroListFold.transform);
+        if (transform == null) {
+          return null;
+        }
+        return new EvalListFold(
+            expr.getId(), fold.getIterVar(), iterRange, filter, transform, adapter);
+      }
+
       Interpretable accu = plan(fold.getAccuInit());
       if (accu == null) {
         return null;
@@ -615,8 +637,132 @@ public interface InterpretablePlanner {
           expr.getId(), fold.getAccuVar(), accu, fold.getIterVar(), iterRange, cond, step, result);
     }
 
+    private static MacroListFold macroListFold(Comprehension fold) {
+      if (!isEmptyList(fold.getAccuInit())
+          || !isBoolConst(fold.getLoopCondition(), true)
+          || !isIdent(fold.getResult(), fold.getAccuVar())) {
+        return null;
+      }
+
+      Expr step = fold.getLoopStep();
+      Expr filter = null;
+      if (isCall(step, Operator.Conditional.id, 3)) {
+        Call conditional = step.getCallExpr();
+        if (!isIdent(conditional.getArgs(2), fold.getAccuVar())) {
+          return null;
+        }
+        filter = conditional.getArgs(0);
+        step = conditional.getArgs(1);
+      }
+
+      Expr transform = appendedValue(fold.getAccuVar(), step);
+      if (transform == null
+          || referencesIdent(transform, fold.getAccuVar())
+          || (filter != null && referencesIdent(filter, fold.getAccuVar()))) {
+        return null;
+      }
+      return new MacroListFold(filter, transform);
+    }
+
+    private static Expr appendedValue(String accuVar, Expr step) {
+      if (!isCall(step, Operator.Add.id, 2)) {
+        return null;
+      }
+      Call add = step.getCallExpr();
+      if (!isIdent(add.getArgs(0), accuVar)) {
+        return null;
+      }
+      Expr list = add.getArgs(1);
+      if (list.getExprKindCase() != Expr.ExprKindCase.LIST_EXPR
+          || list.getListExpr().getElementsCount() != 1) {
+        return null;
+      }
+      return list.getListExpr().getElements(0);
+    }
+
+    private static boolean isCall(Expr expr, String function, int argCount) {
+      return expr.getExprKindCase() == Expr.ExprKindCase.CALL_EXPR
+          && expr.getCallExpr().getFunction().equals(function)
+          && expr.getCallExpr().getArgsCount() == argCount
+          && !expr.getCallExpr().hasTarget();
+    }
+
+    private static boolean isIdent(Expr expr, String name) {
+      return expr.getExprKindCase() == Expr.ExprKindCase.IDENT_EXPR
+          && expr.getIdentExpr().getName().equals(name);
+    }
+
+    private static boolean isEmptyList(Expr expr) {
+      return expr.getExprKindCase() == Expr.ExprKindCase.LIST_EXPR
+          && expr.getListExpr().getElementsCount() == 0;
+    }
+
+    private static boolean isBoolConst(Expr expr, boolean value) {
+      return expr.getExprKindCase() == Expr.ExprKindCase.CONST_EXPR
+          && expr.getConstExpr().getConstantKindCase() == Constant.ConstantKindCase.BOOL_VALUE
+          && expr.getConstExpr().getBoolValue() == value;
+    }
+
+    private static boolean referencesIdent(Expr expr, String name) {
+      switch (expr.getExprKindCase()) {
+        case IDENT_EXPR:
+          return expr.getIdentExpr().getName().equals(name);
+        case SELECT_EXPR:
+          return referencesIdent(expr.getSelectExpr().getOperand(), name);
+        case CALL_EXPR:
+          Call call = expr.getCallExpr();
+          if (call.hasTarget() && referencesIdent(call.getTarget(), name)) {
+            return true;
+          }
+          for (Expr arg : call.getArgsList()) {
+            if (referencesIdent(arg, name)) {
+              return true;
+            }
+          }
+          return false;
+        case LIST_EXPR:
+          for (Expr elem : expr.getListExpr().getElementsList()) {
+            if (referencesIdent(elem, name)) {
+              return true;
+            }
+          }
+          return false;
+        case STRUCT_EXPR:
+          for (Entry entry : expr.getStructExpr().getEntriesList()) {
+            if (referencesIdent(entry.getValue(), name)) {
+              return true;
+            }
+          }
+          return false;
+        case COMPREHENSION_EXPR:
+          Comprehension comprehension = expr.getComprehensionExpr();
+          return referencesIdent(comprehension.getIterRange(), name)
+              || referencesIdent(comprehension.getAccuInit(), name)
+              || (!comprehension.getIterVar().equals(name)
+                  && !comprehension.getAccuVar().equals(name)
+                  && referencesIdent(comprehension.getLoopCondition(), name))
+              || (!comprehension.getIterVar().equals(name)
+                  && !comprehension.getAccuVar().equals(name)
+                  && referencesIdent(comprehension.getLoopStep(), name))
+              || (!comprehension.getAccuVar().equals(name)
+                  && referencesIdent(comprehension.getResult(), name));
+        default:
+          return false;
+      }
+    }
+
+    private static final class MacroListFold {
+      final Expr filter;
+      final Expr transform;
+
+      private MacroListFold(Expr filter, Expr transform) {
+        this.filter = filter;
+        this.transform = transform;
+      }
+    }
+
     /** planConst generates a constant valued Interpretable. */
-    Interpretable planConst(Expr expr) {
+    static Interpretable planConst(Expr expr) {
       Val val = constValue(expr.getConstExpr());
       if (val == null) {
         return null;
@@ -626,7 +772,7 @@ public interface InterpretablePlanner {
 
     /** constValue converts a proto Constant value to a ref.Val. */
     @SuppressWarnings("deprecation")
-    Val constValue(Constant c) {
+    static Val constValue(Constant c) {
       switch (c.getConstantKindCase()) {
         case BOOL_VALUE:
           return boolOf(c.getBoolValue());
