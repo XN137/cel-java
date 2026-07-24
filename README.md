@@ -40,7 +40,7 @@ Maven:
     <dependency>
       <groupId>org.projectnessie.cel</groupId>
       <artifactId>cel-bom</artifactId>
-      <version>0.7.0</version>
+      <version>0.8.0</version>
       <type>pom</type>
       <scope>import</scope>
     </dependency>
@@ -63,7 +63,7 @@ Gradle:
 
 ```groovy
 dependencies {
-  implementation(enforcedPlatform("org.projectnessie.cel:cel-bom:0.7.0"))
+  implementation(enforcedPlatform("org.projectnessie.cel:cel-bom:0.8.0"))
   implementation("org.projectnessie.cel:cel-generated-pb")
   implementation("org.projectnessie.cel:cel-tools")
 }
@@ -197,7 +197,7 @@ To use Jackson 3, add `cel-jackson3` in addition to `cel-tools` or `cel-core`:
 
 ```groovy
 dependencies {
-  implementation(enforcedPlatform("org.projectnessie.cel:cel-bom:0.7.0"))
+  implementation(enforcedPlatform("org.projectnessie.cel:cel-bom:0.8.0"))
   implementation("org.projectnessie.cel:cel-generated-pb")
   implementation("org.projectnessie.cel:cel-tools")
   implementation("org.projectnessie.cel:cel-jackson3")
